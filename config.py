@@ -100,6 +100,6 @@ SERMON_ALBUM = {
 SYNC_INTERVAL_SECONDS = int(os.getenv("SYNC_INTERVAL_SECONDS") or "600")  # 10 min par défaut (vérification légère, plus besoin de 6h)
 
 # Grille de sélection des prédications
-SERMONS_PER_ROW = 5
-SERMONS_ROWS_PER_PAGE = 6
+SERMONS_PER_ROW = 4
+SERMONS_ROWS_PER_PAGE = 10
 SERMONS_PER_PAGE = SERMONS_PER_ROW * SERMONS_ROWS_PER_PAGE
