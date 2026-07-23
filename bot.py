@@ -148,7 +148,7 @@ def _build_sermon_grid(sermons, selected: set, page: int, ui_language: str, cont
     rows = []
     row = []
     for sermon in page_sermons:
-        label = f"✅ Kacou {sermon.number}" if sermon.number in selected else f"Kacou {sermon.number}"
+        label = f"✅ Kc. {sermon.number}" if sermon.number in selected else f"Kc. {sermon.number}"
         row.append(InlineKeyboardButton(label, callback_data=f"{CB_TOGGLE}:{content_lang}:{sermon.number}:{page}"))
         if len(row) == config.SERMONS_PER_ROW:
             rows.append(row)
