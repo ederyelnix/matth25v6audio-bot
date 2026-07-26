@@ -225,10 +225,7 @@ def _render_page(sermon, content_language: str, verses_with_positions, is_first_
 
 
 def _format_date(publication_date: str) -> str:
-    """Même convention que sync_service.format_date : 'AAAA-MM-JJ ...' -> 'JJ.MM.AAAA'."""
-    from datetime import datetime
-    dt = datetime.strptime(publication_date.split(" ")[0].split("T")[0], "%Y-%m-%d")
-    return dt.strftime("%d.%m.%Y")
+    return publication_date;
 
 
 # ---------------------------------------------------------------------------
