@@ -1,33 +1,39 @@
 """
 Génération d'un PDF pour une prédication, une prédication à la fois.
 
-Même logique que le système de lettres de motivation (Bewerbungsschreiben) :
-overlay de texte sur une image de base via ImageMagick, puis assemblage des
-pages en PDF via img2pdf.
+Utilise Wand (binding Python de MagickWand/ImageMagick) plutôt que des appels
+subprocess à `convert` : plus rapide (pas de nouveau processus à chaque appel),
+et accès direct aux métriques réelles de police pour le positionnement par
+baseline (aucune valeur approximée à la main).
 
 Toutes les coordonnées (149.2, 278.1, 1702.4, 115.7...) sont directement en
 pixels sur le canevas 1414x2000 -- aucun ratio de conversion. Les tailles de
-police (13.67 / 15.01 / 13) sont utilisées telles quelles comme -pointsize
-ImageMagick.
+police (13.67 / 15.01 / 13) sont utilisées telles quelles comme font_size Wand.
 
-Fonction synchrone/bloquante (subprocess ImageMagick) : à appeler via
+Fonction synchrone/bloquante (Wand/MagickWand) : à appeler via
 asyncio.to_thread() depuis le bot pour ne jamais geler la boucle asyncio.
 
-IMPORTANT : le positionnement vertical précis (baseline -> haut du bloc via
-l'ascendant réel de la police, extrait des métriques ImageMagick) n'a pas pu
-être testé ici avec les polices réelles (elles ne sont installées que sur
-ta machine). La technique utilisée (-debug annotate pour lire l'ascendant
-exact) est la méthode standard ImageMagick pour ce genre de positionnement,
-mais un léger ajustement visuel (quelques px) peut être nécessaire une fois
-testé chez toi -- les constantes sont toutes regroupées en haut de ce fichier.
+Vérifié empiriquement pendant le développement (voir tests) :
+  - Drawing.text(x, y, ...) positionne bien (x, y) sur la BASELINE du texte,
+    pas le haut de la boîte englobante -- confirmé par mesure de pixels.
+  - Les métriques get_font_metrics().ascender / .descender donnent les
+    valeurs réelles de la police (descender négatif, comme ImageMagick CLI).
+  - Le format pseudo `caption:` (retour à la ligne natif ImageMagick) est
+    utilisé pour le bloc de versets, avec hauteur automatique -- Wand impose
+    normalement height>0 dans sa méthode .pseudo(), donc on appelle
+    MagickSetSize/MagickReadImage directement (toujours via Wand, juste ses
+    fonctions bas niveau) pour obtenir la hauteur=0 (auto) comme en CLI.
 """
-import subprocess
-import tempfile
-import uuid
 from pathlib import Path
 from typing import List, Optional
+import uuid
 
 import img2pdf
+from wand.color import Color
+from wand.compat import encode_filename
+from wand.drawing import Drawing
+from wand.font import Font
+from wand.image import Image, library
 
 import official_db
 
@@ -42,7 +48,7 @@ TEMPLATE_PATH = ASSETS_DIR / "kacou_template.png"
 CANVAS_WIDTH = 1414
 CANVAS_HEIGHT = 2000
 
-FONT_HEADER = FONTS_DIR / "LeagueSpartan-Bold.ttf"
+FONT_HEADER = FONTS_DIR / "LeagueSpartan-Bold.otf"
 FONT_TITLE = FONTS_DIR / "Montserrat-SemiBold.ttf"
 FONT_BODY = FONTS_DIR / "JosefinSans-Light.ttf"
 
@@ -77,146 +83,143 @@ class PdfGenerationError(Exception):
 
 
 # ---------------------------------------------------------------------------
-# Métriques de police (ImageMagick -debug annotate donne l'ascendant/descendant
-# EXACT de la police à une taille donnée -- pas d'approximation).
+# Métriques de police (valeurs réelles via Wand, aucune approximation)
 # ---------------------------------------------------------------------------
-def _font_metrics(font_path: Path, pointsize: float) -> dict:
-    result = subprocess.run(
-        [
-            "convert", "-debug", "annotate", "xc:",
-            "-font", str(font_path), "-pointsize", str(pointsize),
-            "-annotate", "+0+0", "Ag",
-            "null:",
-        ],
-        capture_output=True, text=True,
-    )
-    output = result.stdout + result.stderr
-    for line in output.splitlines():
-        if "Metrics" in line and "ascent" in line:
-            tokens = line.replace(":", " ").split()
-            values = {}
-            for i, tok in enumerate(tokens):
-                if tok in ("ascent", "descent"):
-                    values[tok] = float(tokens[i + 1])
-            if "ascent" in values and "descent" in values:
-                return values
-    raise PdfGenerationError(f"Impossible de lire les métriques de {font_path} @ {pointsize}pt")
+def _font_metrics(font_path: Path, pointsize: float):
+    """Retourne le FontMetrics réel (ascender/descender/...) pour une police et une taille données."""
+    with Image(width=10, height=10) as probe:
+        with Drawing() as draw:
+            draw.font = str(font_path)
+            draw.font_size = pointsize
+            return draw.get_font_metrics(probe, "Ag", multiline=False)
 
 
 def _font_ascent(font_path: Path, pointsize: float) -> float:
-    return _font_metrics(font_path, pointsize)["ascent"]
+    return _font_metrics(font_path, pointsize).ascender
 
 
 def _line_height(font_path: Path, pointsize: float) -> float:
     m = _font_metrics(font_path, pointsize)
-    return m["ascent"] - m["descent"]
+    return m.ascender - m.descender  # descender est négatif
 
 
 def _caption_height(text: str, font_path: Path, pointsize: float, width: float) -> float:
-    """Hauteur totale (px) qu'occuperait ce texte en caption: à cette largeur
-    (retour à la ligne et espacement des \\n\\n gérés nativement par ImageMagick)."""
-    with tempfile.NamedTemporaryFile(suffix=".png", delete=True) as tmp:
-        subprocess.run(
-            [
-                "convert", "-size", f"{int(width)}x",
-                "-font", str(font_path), "-pointsize", str(pointsize),
-                f"caption:{text}",
-                tmp.name,
-            ],
-            check=True, capture_output=True,
-        )
-        out = subprocess.run(["identify", "-format", "%h", tmp.name], capture_output=True, text=True, check=True)
-        return float(out.stdout.strip())
+    """
+    Hauteur totale (px) qu'occuperait ce texte en bloc `caption:` à cette largeur
+    (retour à la ligne et espacement des \\n\\n gérés nativement par ImageMagick).
+    Hauteur automatique (0) : Wand.Image.pseudo() interdit height=0, donc appel
+    direct des fonctions MagickWand sous-jacentes (toujours via Wand).
+    """
+    img = Image()
+    try:
+        img.font = Font(path=str(font_path), size=pointsize)
+        library.MagickSetSize(img.wand, int(width), 0)
+        r = library.MagickReadImage(img.wand, encode_filename(f"caption:{text}"))
+        if not r:
+            img.raise_exception()
+        return float(img.height)
+    finally:
+        img.close()
 
 
 # ---------------------------------------------------------------------------
 # Composition sur le canevas
 # ---------------------------------------------------------------------------
-def _annotate_centered(canvas_path: Path, text: str, font_path: Path, pointsize: float, color: str, baseline_y: float):
-    ascent = _font_ascent(font_path, pointsize)
-    top_y = baseline_y - ascent
-    subprocess.run(
-        [
-            "convert", str(canvas_path),
-            "-font", str(font_path), "-pointsize", str(pointsize), "-fill", color,
-            "-gravity", "North",
-            "-annotate", f"+0+{top_y:.2f}", text,
-            str(canvas_path),
-        ],
-        check=True, capture_output=True,
-    )
+def _annotate_centered(canvas: Image, text: str, font_path: Path, pointsize: float, color: str, baseline_y: float):
+    with Drawing() as draw:
+        draw.font = str(font_path)
+        draw.font_size = pointsize
+        draw.fill_color = Color(color)
+        draw.text_alignment = "center"
+        draw.text(int(round(canvas.width / 2)), int(round(baseline_y)), text)
+        draw.draw(canvas)
 
 
-def _composite_caption_block(canvas_path: Path, text: str, font_path: Path, pointsize: float, color: str,
+def _composite_caption_block(canvas: Image, text: str, font_path: Path, pointsize: float, color: str,
                               x: float, top_y: float, width: float):
-    """Compose un bloc caption: (gère lui-même retour à la ligne + espacement des \\n\\n) à la position donnée."""
-    subprocess.run(
-        [
-            "convert", str(canvas_path),
-            "(", "-size", f"{int(width)}x",
-                 "-font", str(font_path), "-pointsize", str(pointsize), "-fill", color,
-                 f"caption:{text}",
-            ")",
-            "-geometry", f"+{int(round(x))}+{int(round(top_y))}",
-            "-compose", "over", "-composite",
-            str(canvas_path),
-        ],
-        check=True, capture_output=True,
-    )
+    """Compose un bloc caption: (retour à la ligne + espacement \\n\\n natifs) à la position donnée."""
+    block = Image()
+    try:
+        block.font = Font(path=str(font_path), size=pointsize, color=Color(color))
+        library.MagickSetSize(block.wand, int(width), 0)
+        r = library.MagickReadImage(block.wand, encode_filename(f"caption:{text}"))
+        if not r:
+            block.raise_exception()
+        canvas.composite(block, left=int(round(x)), top=int(round(top_y)))
+    finally:
+        block.close()
 
 
 # ---------------------------------------------------------------------------
-# Pagination : versets = unité atomique, jamais coupés au milieu. Une page ne
-# commence jamais par une ligne vide (pas de \n\n en tête de page suivante).
+# Pagination : chaque verset est mesuré INDIVIDUELLEMENT (jamais plusieurs
+# versets concaténés dans un seul appel ImageMagick -- un texte cumulé trop
+# long déclenche une limite interne de sécurité d'ImageMagick, indépendante
+# de notre largeur de colonne). Un verset n'est jamais coupré au milieu.
+# Une page ne commence jamais par une ligne vide.
 # ---------------------------------------------------------------------------
 def _verse_line(v: "official_db.Verse") -> str:
     return f"{v.number} {v.content}"
 
 
-def _fit_page(verses: List["official_db.Verse"], budget_height: float, box_width: float):
-    current = []
-    for i, verse in enumerate(verses):
-        candidate = current + [verse]
-        text = "\n\n".join(_verse_line(v) for v in candidate)
-        height = _caption_height(text, FONT_BODY, SIZE_BODY, box_width)
-        if height <= budget_height or not current:
-            current = candidate
-        else:
-            return current, verses[i:]
-    return current, []
+def _verse_height(verse: "official_db.Verse", box_width: float) -> float:
+    return _caption_height(_verse_line(verse), FONT_BODY, SIZE_BODY, box_width)
 
 
-def _paginate(verses: List["official_db.Verse"], budget_page1: float, budget_continuation: float, box_width: float):
+def _layout_verses(verses: List["official_db.Verse"], verses_top_page1: float, verses_top_continuation: float,
+                    box_width: float, body_line_height: float, max_y: float):
+    """
+    Retourne une liste de pages ; chaque page est une liste de (verset, top_y)
+    prêts à être dessinés individuellement (top_y = haut du bloc caption pour
+    ce verset, pas sa baseline -- déjà cohérent avec ce que _render_page attend).
+    """
     pages = []
-    remaining = list(verses)
-    budget = budget_page1
-    while remaining:
-        page_verses, remaining = _fit_page(remaining, budget, box_width)
-        pages.append(page_verses)
-        budget = budget_continuation
+    current: list = []
+    y_top = verses_top_page1
+
+    for verse in verses:
+        gap = body_line_height if current else 0.0
+        h = _verse_height(verse, box_width)
+        candidate_top = y_top + gap
+        candidate_bottom = candidate_top + h
+
+        if current and candidate_bottom > max_y:
+            pages.append(current)
+            current = []
+            y_top = verses_top_continuation
+            candidate_top = y_top
+            candidate_bottom = candidate_top + h
+
+        current.append((verse, candidate_top))
+        y_top = candidate_bottom
+
+    if current:
+        pages.append(current)
+
     return pages
 
 
 # ---------------------------------------------------------------------------
 # Rendu d'une page
 # ---------------------------------------------------------------------------
-def _render_page(sermon, content_language: str, verses_on_page, is_first_page: bool,
-                  page_index: int, work_dir: Path, verses_top_y: float,
+def _render_page(sermon, content_language: str, verses_with_positions, is_first_page: bool,
+                  page_index: int, work_dir: Path,
                   date_str: Optional[str] = None, date_baseline: Optional[float] = None) -> Path:
     page_path = work_dir / f"page_{page_index}.png"
-    subprocess.run(["cp", str(TEMPLATE_PATH), str(page_path)], check=True)
 
-    # Entête, répétée sur TOUTES les pages
-    _annotate_centered(page_path, HEADER_TEXTS[content_language], FONT_HEADER, SIZE_HEADER, COLOR_HEADER, HEADER_BASELINE_Y)
+    with Image(filename=str(TEMPLATE_PATH)) as canvas:
+        # Entête, répétée sur TOUTES les pages
+        _annotate_centered(canvas, HEADER_TEXTS[content_language], FONT_HEADER, SIZE_HEADER, COLOR_HEADER, HEADER_BASELINE_Y)
 
-    if is_first_page:
-        title_text = f"Kacou {sermon.number} : {sermon.title}"
-        _annotate_centered(page_path, title_text, FONT_TITLE, SIZE_TITLE, COLOR_TITLE, CONTENT_START_Y)
-        _annotate_centered(page_path, date_str, FONT_BODY, SIZE_BODY, COLOR_BODY, date_baseline)
+        if is_first_page:
+            title_text = f"Kacou {sermon.number} : {sermon.title}"
+            _annotate_centered(canvas, title_text, FONT_TITLE, SIZE_TITLE, COLOR_TITLE, CONTENT_START_Y)
+            _annotate_centered(canvas, date_str, FONT_BODY, SIZE_BODY, COLOR_BODY, date_baseline)
 
-    verse_text = "\n\n".join(_verse_line(v) for v in verses_on_page)
-    _composite_caption_block(page_path, verse_text, FONT_BODY, SIZE_BODY, COLOR_BODY,
-                              VERSE_X_START, verses_top_y, VERSE_BOX_WIDTH)
+        for verse, top_y in verses_with_positions:
+            _composite_caption_block(canvas, _verse_line(verse), FONT_BODY, SIZE_BODY, COLOR_BODY,
+                                      VERSE_X_START, top_y, VERSE_BOX_WIDTH)
+
+        canvas.save(filename=str(page_path))
 
     return page_path
 
@@ -255,21 +258,21 @@ def generate_sermon_pdf(sermon, content_language: str, verses: List["official_db
         # + une ligne vide (\n\n) avant le premier verset
         verses_first_baseline_page1 = date_baseline + body_line_height + body_line_height
         verses_top_page1 = verses_first_baseline_page1 - body_ascent
-        budget_page1 = CONTENT_MAX_Y - verses_top_page1
 
         verses_top_continuation = CONTENT_START_Y - body_ascent
-        budget_continuation = CONTENT_MAX_Y - verses_top_continuation
 
-        pages_of_verses = _paginate(verses, budget_page1, budget_continuation, VERSE_BOX_WIDTH)
+        pages = _layout_verses(
+            verses, verses_top_page1, verses_top_continuation,
+            VERSE_BOX_WIDTH, body_line_height, CONTENT_MAX_Y,
+        )
 
         date_str = _format_date(sermon.publication_date)
 
         page_paths = []
-        for i, page_verses in enumerate(pages_of_verses):
+        for i, page_verses_positions in enumerate(pages):
             is_first = (i == 0)
-            top_y = verses_top_page1 if is_first else verses_top_continuation
             page_path = _render_page(
-                sermon, content_language, page_verses, is_first, i, work_dir, top_y,
+                sermon, content_language, page_verses_positions, is_first, i, work_dir,
                 date_str=date_str if is_first else None,
                 date_baseline=date_baseline if is_first else None,
             )
