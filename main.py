@@ -44,6 +44,9 @@ def main():
         .token(config.BOT_TOKEN)
         .request(request)
         .get_updates_request(get_updates_request)
+        .concurrent_updates(True)  # sans ça, PTB traite les updates un par un : un PDF en cours
+                                   # bloque tout le reste (autres users, réception audio) même si
+                                   # le calcul lourd tourne déjà dans un thread via asyncio.to_thread
         .build()
     )
     register_handlers(app)
