@@ -82,12 +82,30 @@ class PdfGenerationError(Exception):
     pass
 
 
+def _template_resolution():
+    """
+    Résolution native du template, copiée TELLE QUELLE (aucune conversion
+    d'unités faite à la main) : le header/titre est dessiné directement sur le
+    canevas chargé depuis le fichier, qui porte déjà cette résolution -- c'est
+    pour ça qu'il a toujours la bonne taille. Le bloc `caption:` des versets,
+    lui, est rendu sur une image toute neuve (Image()) qui n'a AUCUNE résolution
+    par défaut (72 DPI ImageMagick) -- sans cette valeur copiée, les versets
+    sont mécaniquement plus petits que prévu par rapport au reste.
+    """
+    with Image(filename=str(TEMPLATE_PATH)) as probe:
+        return probe.resolution
+
+
+TEMPLATE_RESOLUTION = _template_resolution()
+
+
 # ---------------------------------------------------------------------------
 # Métriques de police (valeurs réelles via Wand, aucune approximation)
 # ---------------------------------------------------------------------------
 def _font_metrics(font_path: Path, pointsize: float):
     """Retourne le FontMetrics réel (ascender/descender/...) pour une police et une taille données."""
     with Image(width=10, height=10) as probe:
+        probe.resolution = TEMPLATE_RESOLUTION
         with Drawing() as draw:
             draw.font = str(font_path)
             draw.font_size = pointsize
@@ -112,6 +130,7 @@ def _caption_height(text: str, font_path: Path, pointsize: float, width: float) 
     """
     img = Image()
     try:
+        img.resolution = TEMPLATE_RESOLUTION
         img.font = Font(path=str(font_path), size=pointsize)
         library.MagickSetSize(img.wand, int(width), 0)
         r = library.MagickReadImage(img.wand, encode_filename(f"caption:{text}"))
@@ -140,6 +159,7 @@ def _composite_caption_block(canvas: Image, text: str, font_path: Path, pointsiz
     """Compose un bloc caption: (retour à la ligne + espacement \\n\\n natifs) à la position donnée."""
     block = Image()
     try:
+        block.resolution = TEMPLATE_RESOLUTION
         block.font = Font(path=str(font_path), size=pointsize, color=Color(color))
         library.MagickSetSize(block.wand, int(width), 0)
         r = library.MagickReadImage(block.wand, encode_filename(f"caption:{text}"))
