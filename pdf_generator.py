@@ -56,9 +56,9 @@ COLOR_HEADER = "#d5bdaf"
 COLOR_TITLE = "#1800ad"
 COLOR_BODY = "#1f2122"
 
-SIZE_HEADER = 15.67
-SIZE_TITLE = 17.01
-SIZE_BODY = 15.0
+SIZE_HEADER = 25.67
+SIZE_TITLE = 27.01
+SIZE_BODY = 25.0
 
 # Positions en px, directement sur le canevas 1414x2000 (baselines)
 HEADER_BASELINE_Y = 149.2
