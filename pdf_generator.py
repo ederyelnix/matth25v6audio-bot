@@ -255,10 +255,10 @@ def _render_page(sermon, content_language: str, verses_with_positions, is_first_
 
 
 def _format_date(publication_date: str) -> str:
-    """Même convention que sync_service.format_date : 'AAAA-MM-JJ ...' -> 'JJ.MM.AAAA'."""
-    from datetime import datetime
-    dt = datetime.strptime(publication_date.split(" ")[0].split("T")[0], "%Y-%m-%d")
-    return dt.strftime("%d.%m.%Y")
+    """publication_date est déjà une chaîne lisible fournie par la DB officielle
+    (ex: 'Dim. 15 Mars 2026'), pas un format ISO -- on l'utilise telle quelle,
+    sans tenter de la re-parser/reformater (ça faisait planter la génération)."""
+    return publication_date
 
 
 # ---------------------------------------------------------------------------
