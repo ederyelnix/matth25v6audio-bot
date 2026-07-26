@@ -82,24 +82,6 @@ class PdfGenerationError(Exception):
     pass
 
 
-def _template_dpi() -> float:
-    """
-    Densité réelle du template (ex: 67.32 px/cm = 171 DPI), calibrée sur le
-    document Photoshop d'origine -- c'est CETTE densité qui donne 1pt = la
-    bonne taille en px pour les valeurs (13.67, 15.01, 13...) telles que
-    dessinées dans Photoshop, pas 72 DPI.
-    """
-    with Image(filename=str(TEMPLATE_PATH)) as probe:
-        x_dpi, y_dpi = probe.resolution
-        units = probe.units
-    if units == "pixelspercentimeter":
-        return x_dpi * 2.54
-    return x_dpi  # déjà en pixelsperinch
-
-
-TEMPLATE_DPI = _template_dpi()
-
-
 # ---------------------------------------------------------------------------
 # Métriques de police (valeurs réelles via Wand, aucune approximation)
 # ---------------------------------------------------------------------------
@@ -109,10 +91,6 @@ def _font_metrics(font_path: Path, pointsize: float):
         with Drawing() as draw:
             draw.font = str(font_path)
             draw.font_size = pointsize
-            # Levier réel pour Drawing.text()/get_font_metrics() : font_resolution.
-            # Image.resolution n'a AUCUN effet sur ce chemin de rendu (vérifié empiriquement) --
-            # c'est différent du chemin `caption:` plus bas, qui lui utilise Image.resolution.
-            draw.font_resolution = (TEMPLATE_DPI, TEMPLATE_DPI)
             return draw.get_font_metrics(probe, "Ag", multiline=False)
 
 
@@ -134,7 +112,6 @@ def _caption_height(text: str, font_path: Path, pointsize: float, width: float) 
     """
     img = Image()
     try:
-        img.resolution = (TEMPLATE_DPI, TEMPLATE_DPI)
         img.font = Font(path=str(font_path), size=pointsize)
         library.MagickSetSize(img.wand, int(width), 0)
         r = library.MagickReadImage(img.wand, encode_filename(f"caption:{text}"))
@@ -152,7 +129,6 @@ def _annotate_centered(canvas: Image, text: str, font_path: Path, pointsize: flo
     with Drawing() as draw:
         draw.font = str(font_path)
         draw.font_size = pointsize
-        draw.font_resolution = (TEMPLATE_DPI, TEMPLATE_DPI)
         draw.fill_color = Color(color)
         draw.text_alignment = "center"
         draw.text(int(round(canvas.width / 2)), int(round(baseline_y)), text)
@@ -164,7 +140,6 @@ def _composite_caption_block(canvas: Image, text: str, font_path: Path, pointsiz
     """Compose un bloc caption: (retour à la ligne + espacement \\n\\n natifs) à la position donnée."""
     block = Image()
     try:
-        block.resolution = (TEMPLATE_DPI, TEMPLATE_DPI)
         block.font = Font(path=str(font_path), size=pointsize, color=Color(color))
         library.MagickSetSize(block.wand, int(width), 0)
         r = library.MagickReadImage(block.wand, encode_filename(f"caption:{text}"))
@@ -232,11 +207,6 @@ def _render_page(sermon, content_language: str, verses_with_positions, is_first_
     page_path = work_dir / f"page_{page_index}.png"
 
     with Image(filename=str(TEMPLATE_PATH)) as canvas:
-        # Densité alignée avec les blocs caption: composités plus bas (versets),
-        # qui utilisent aussi TEMPLATE_DPI -- évite tout écart d'échelle au composite().
-        # (Sans effet sur Drawing.text() ci-dessous, qui utilise font_resolution séparément.)
-        canvas.resolution = (TEMPLATE_DPI, TEMPLATE_DPI)
-        canvas.units = "pixelsperinch"
         # Entête, répétée sur TOUTES les pages
         _annotate_centered(canvas, HEADER_TEXTS[content_language], FONT_HEADER, SIZE_HEADER, COLOR_HEADER, HEADER_BASELINE_Y)
 
