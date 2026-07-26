@@ -18,10 +18,34 @@ TEXTS = {
         "es": "Menú principal",
     },
     "btn_sermons": {
-        "fr": "📖 Voir les prédications",
-        "en": "📖 View the sermons",
-        "pt": "📖 Ver as pregações",
-        "es": "📖 Ver las predicaciones",
+        "fr": "🎧 Prédication audio",
+        "en": "🎧 Audio sermon",
+        "pt": "🎧 Pregação em áudio",
+        "es": "🎧 Predicación en audio",
+    },
+    "btn_pdf": {
+        "fr": "📄 Générer un PDF",
+        "en": "📄 Generate a PDF",
+        "pt": "📄 Gerar um PDF",
+        "es": "📄 Generar un PDF",
+    },
+    "choose_sermon_pdf": {
+        "fr": "Sélectionnez la prédication à recevoir en PDF :",
+        "en": "Select the sermon to receive as a PDF:",
+        "pt": "Selecione a pregação para receber em PDF:",
+        "es": "Seleccione la predicación para recibir en PDF:",
+    },
+    "pdf_processing": {
+        "fr": "Génération du PDF de Kacou {number} en cours...",
+        "en": "Generating the PDF for Kacou {number}...",
+        "pt": "Gerando o PDF de Kacou {number}...",
+        "es": "Generando el PDF de Kacou {number}...",
+    },
+    "pdf_failed": {
+        "fr": "Désolé, la génération du PDF de Kacou {number} a échoué. Réessayez dans quelques instants.",
+        "en": "Sorry, generating the PDF for Kacou {number} failed. Please try again shortly.",
+        "pt": "Desculpe, a geração do PDF de Kacou {number} falhou. Tente novamente em instantes.",
+        "es": "Lo sentimos, la generación del PDF de Kacou {number} falló. Inténtelo de nuevo en unos instantes.",
     },
     "choose_content_language": {
         "fr": "Dans quelle langue souhaitez-vous consulter les prédications ?",

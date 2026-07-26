@@ -74,3 +74,55 @@ def get_sermon_count(lang_db_path: Path) -> int:
         return row["c"]
     finally:
         conn.close()
+
+
+def get_sermon_by_number(lang_db_path: Path, number: int) -> "Sermon | None":
+    conn = _connect_ro(lang_db_path)
+    try:
+        r = conn.execute(
+            """
+            SELECT id, number, title, audio, audio_name, publication_date, updated_at
+            FROM sermons
+            WHERE is_active = 1 AND number = ?
+            """,
+            (number,),
+        ).fetchone()
+        if r is None:
+            return None
+        return Sermon(
+            id=r["id"], number=r["number"], title=r["title"], audio=r["audio"],
+            audio_name=r["audio_name"], publication_date=r["publication_date"], updated_at=r["updated_at"],
+        )
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# matth25v6_XX.db — table verses (liée à sermons par sermon_id)
+# ---------------------------------------------------------------------------
+@dataclass
+class Verse:
+    number: int
+    content: str
+
+
+def get_verses_for_sermon(lang_db_path: Path, sermon_number: int) -> List[Verse]:
+    """
+    Réplique SQL_VERSE du .cpp (jointure verses/sermons sur sermon_id),
+    versets dans l'ordre.
+    """
+    conn = _connect_ro(lang_db_path)
+    try:
+        rows = conn.execute(
+            """
+            SELECT v.number, v.content
+            FROM verses v
+            INNER JOIN sermons s ON s.id = v.sermon_id
+            WHERE s.number = ?
+            ORDER BY v.number ASC
+            """,
+            (sermon_number,),
+        ).fetchall()
+        return [Verse(number=r["number"], content=r["content"]) for r in rows]
+    finally:
+        conn.close()
