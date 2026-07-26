@@ -56,9 +56,9 @@ COLOR_HEADER = "#d5bdaf"
 COLOR_TITLE = "#1800ad"
 COLOR_BODY = "#1f2122"
 
-SIZE_HEADER = 13.67
-SIZE_TITLE = 15.01
-SIZE_BODY = 13.0
+SIZE_HEADER = 15.67
+SIZE_TITLE = 17.01
+SIZE_BODY = 15.0
 
 # Positions en px, directement sur le canevas 1414x2000 (baselines)
 HEADER_BASELINE_Y = 149.2
@@ -225,9 +225,6 @@ def _render_page(sermon, content_language: str, verses_with_positions, is_first_
 
 
 def _format_date(publication_date: str) -> str:
-    """publication_date est déjà une chaîne lisible fournie par la DB officielle
-    (ex: 'Dim. 15 Mars 2026'), pas un format ISO -- on l'utilise telle quelle,
-    sans tenter de la re-parser/reformater (ça faisait planter la génération)."""
     return publication_date
 
 
