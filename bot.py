@@ -297,7 +297,7 @@ def _build_sermon_grid_pdf(sermons, page: int, ui_language: str, content_lang: s
     rows = []
     row = []
     for sermon in page_sermons:
-        row.append(InlineKeyboardButton(f"Kacou {sermon.number}", callback_data=f"{CB_PDF_PICK}:{content_lang}:{sermon.number}"))
+        row.append(InlineKeyboardButton(f"Kc {sermon.number}", callback_data=f"{CB_PDF_PICK}:{content_lang}:{sermon.number}"))
         if len(row) == config.SERMONS_PER_ROW:
             rows.append(row)
             row = []
