@@ -21,23 +21,26 @@ def _db_filename(language_or_common: str) -> str:
 
 def fetch_all_updates() -> dict:
     """
-    Interroge GET {API_BASE_URL}/en-en/langue-releases/all-new-updates?langs[]=...
-    pour connaître, en un seul appel léger, la date de dernière mise à jour de
-    'common' et de chaque langue, SANS télécharger aucune DB.
+    Interroge GET {API_BASE_URL}/en-en/langue-releases/all-new-updates?langs[]=X
+    UNE FOIS PAR LANGUE (appel séparé, un seul langs[] par requête -- pas de lien
+    général avec plusieurs langs[] regroupés, qui ne renvoyait pas correctement
+    tout le monde).
     Le préfixe 'en-en' dans l'URL est FIXE (propre à cet endpoint), peu importe
     la langue demandée dans langs[] -- ce n'est pas API_INITIALS["common"].
-    Retourne un dict tel que renvoyé par l'API : {"common": "...", "fr-fr": "...", ...}
+    Retourne un dict fusionné : {"common": "...", "fr-fr": "...", ...}
     (clés = valeurs API_INITIALS, pas nos codes langue internes).
     """
     ALL_UPDATES_PREFIX = "en-en"
     langs_requested = [config.API_INITIALS["common"]] + [config.API_INITIALS[lang] for lang in config.LANGUAGES]
     url = f"{config.API_BASE_URL}/{ALL_UPDATES_PREFIX}/langue-releases/all-new-updates"
-    params = [("langs[]", code) for code in langs_requested]
 
-    resp = requests.get(url, params=params, timeout=30)
-    resp.raise_for_status()
-    data = resp.json()
-    return {entry["langue"]: entry["updated_at"] for entry in data}
+    result = {}
+    for code in langs_requested:
+        resp = requests.get(url, params=[("langs[]", code)], timeout=30)
+        resp.raise_for_status()
+        for entry in resp.json():
+            result[entry["langue"]] = entry["updated_at"]
+    return result
 
 
 def fetch_download_url(initial: str) -> str:
